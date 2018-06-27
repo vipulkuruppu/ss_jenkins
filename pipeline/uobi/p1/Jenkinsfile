@@ -52,16 +52,16 @@ pipeline
 			{
 				echo "CORE - Downloading code drop ${env.core_code_drop_zip}"
 				sh "echo 'CORE - Downloading code drop '${env.core_code_drop_zip}  >> ${WORKSPACE}/logs/pipeline.log"
-				script
-				{
-					downloadCodeDrop(downloadDir: "${env.download_dir}", module: 'CORE', moduleVersion: "${CORE_Version}", dropVersion: "${CORE_Code_Drop_Version}")
-				}
+				//script
+				//{
+				//	downloadCodeDrop(downloadDir: "${env.download_dir}", module: 'CORE', moduleVersion: "${CORE_Version}", dropVersion: "${CORE_Code_Drop_Version}")
+				//}
 				echo "${Country} - Downloading code drop ${env.country_code_drop_zip}"
 				sh "echo ${Country}' - Downloading code drop '${env.country_code_drop_zip}  >> ${WORKSPACE}/logs/pipeline.log"
-				script
-				{
-					downloadCodeDrop(downloadDir: "${env.download_dir}", module: "${Country}", moduleVersion: "${Country_Version}", dropVersion: "${Country_Code_Drop_Version}")
-				}
+				//script
+				//{
+				//	downloadCodeDrop(downloadDir: "${env.download_dir}", module: "${Country}", moduleVersion: "${Country_Version}", dropVersion: "${Country_Code_Drop_Version}")
+				//}
 			}
 		}
 
