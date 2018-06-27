@@ -3,7 +3,7 @@
 
 pipeline
 {
-	agent any
+	agent {label 'MASTER'}
 	parameters 
 	{
 		// get Core drop version
