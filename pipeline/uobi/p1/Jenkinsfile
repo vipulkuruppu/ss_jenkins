@@ -3,7 +3,7 @@
 
 pipeline
 {
-	agent {label 'LX-MASTER'}
+	agent any
 	parameters 
 	{
 		// get Core drop version
