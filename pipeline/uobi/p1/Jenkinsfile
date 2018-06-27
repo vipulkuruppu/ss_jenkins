@@ -1,0 +1,267 @@
+// load shared libraries
+@Library('jenkins_ss_shared') _
+
+pipeline
+{
+	agent {label 'LX-MASTER'}
+	parameters 
+	{
+		// get Core drop version
+		string(defaultValue: '2.0.1b', description: 'Enter CORE Version', name: 'CORE_Version')
+		string(defaultValue: '20180626_191936', description: 'Enter CORE Code Drop Version', name: 'CORE_Code_Drop_Version')
+		// get Country drop version
+		string(defaultValue: 'ID', description: 'Select Country', name: 'Country')
+		string(defaultValue: '1.0', description: 'Enter UOBI Version', name: 'Country_Version')
+		string(defaultValue: '20180626_192142', description: 'Enter UOBI Code Drop Version', name: 'Country_Code_Drop_Version')
+		// get SIT env
+		string(defaultValue: 'sit3', description: 'Enter Country SIT Environment to deploy', name: 'SIT_Environment')
+	}
+
+	environment 
+	{
+		// generate build 
+		def build_version = sh ( script: 'date +%d%m%Y_%H%M%S',	returnStdout: true ).trim()
+		// define download path
+		def download_dir = "${WORKSPACE}/download"
+		// define CORE code drop file
+		def core_code_drop_zip = "${CORE_Version}-${CORE_Code_Drop_Version}.zip"
+		// define Country code drop file
+		def country_code_drop_zip = "${Country_Version}-${Country_Code_Drop_Version}.zip"
+	}
+
+	stages
+	{
+		
+		stage("Initialize Jenkins Environment")	
+		{
+			steps
+			{
+				sh "if [ -d ${WORKSPACE}/logs ]; then rm -rf ${WORKSPACE}/logs/*; else mkdir -p ${WORKSPACE}/logs; fi"
+				sh "if [ -d ${env.download_dir} ]; then rm -rf ${env.download_dir}/*; else mkdir -p ${env.download_dir}; fi"
+				sh "echo '------------------------------------------------' > ${WORKSPACE}/logs/pipeline.log"
+				sh "echo 'Jenkins pipeline started at : '\$(date) >> ${WORKSPACE}/logs/pipeline.log"
+				sh "echo 'Build Version : '${env.build_version} >> ${WORKSPACE}/logs/pipeline.log"
+				sh "echo '------------------------------------------------' >> ${WORKSPACE}/logs/pipeline.log"
+			
+			}
+		}
+		
+		stage("Download Source Drops") 
+		{
+			steps
+			{
+				echo "CORE - Downloading code drop ${env.core_code_drop_zip}"
+				sh "echo 'CORE - Downloading code drop '${env.core_code_drop_zip}  >> ${WORKSPACE}/logs/pipeline.log"
+				script
+				{
+					downloadCodeDrop(downloadDir: "${env.download_dir}", module: 'CORE', moduleVersion: "${CORE_Version}", dropVersion: "${CORE_Code_Drop_Version}")
+				}
+				echo "${Country} - Downloading code drop ${env.country_code_drop_zip}"
+				sh "echo ${Country}' - Downloading code drop '${env.country_code_drop_zip}  >> ${WORKSPACE}/logs/pipeline.log"
+				script
+				{
+					downloadCodeDrop(downloadDir: "${env.download_dir}", module: "${Country}", moduleVersion: "${Country_Version}", dropVersion: "${Country_Code_Drop_Version}")
+				}
+			}
+		}
+
+		stage("Upload Source Drops to Slave") 
+		{
+			steps
+			{
+				echo "CORE - Uploading code drop ${env.core_code_drop_zip}"
+				sh "echo 'CORE - Uploading code drop '${env.core_code_drop_zip}  >> ${WORKSPACE}/logs/pipeline.log"
+				script
+				{
+					uploadToSlave(slave: "CLSTSG80", sourceDir: "${env.download_dir}", file: "${env.core_code_drop_zip}", destinationDir: "download")
+				}
+				//echo "${Country} - Uploading code drop ${env.country_code_drop_zip}"
+				//sh "echo ${Country}' - Uploading code drop '${env.country_code_drop_zip}  >> ${WORKSPACE}/logs/pipeline.log"
+				//script
+				//{
+				//	uploadToSlave(slave: "CLSTSG80", sourceDir: "${env.download_dir}", file: "${env.core_code_drop_zip}", destinationDir: 'download')
+				//}
+			}
+		}
+
+/*
+		stage("ID - Prepare Sources")
+		{		
+			steps
+			{
+				script
+				{
+					def IDPOMVersion = getPOMVersion("${WORKSPACE}/svn_src/ID/pom.xml")
+					//def corePOMVersion = getCorePOMVersion("/tmp/pom.xml")
+					echo "POM Version - ${IDPOMVersion}"
+					echo "Build Version - ${env.build_version}"
+					sh "echo Tag:  ${IDPOMVersion}_${env.build_version} '---------' >> ${WORKSPACE}/logs/pipeline.log"
+				}
+			}
+		}
+
+
+		stage("CORE - Upload Source Package")
+		{
+			steps
+			{
+				wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[password: "${Password}", var: 'Password']]]) 
+				{
+					sh "${WORKSPACE}/pipeline/shell/pipeline.sh SIGNON ald_user=${Username} ald_scrt=${Password} country=CORE module=ONLINE run_mode=${Run_Mode} queue_timeout=${Queue_Timeout} >> ${WORKSPACE}/logs/pipeline.log"
+				}
+			}
+		}
+
+		stage("CORE - Set Development Env")
+		{
+			steps
+			{
+				echo "CORE - ONLINE - Set Development Env"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh SETDEVENV country=CORE module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}  
+
+		stage("CORE - Get Latest From Aldon")
+		{
+			steps
+			{
+				echo "CORE - Get Latest From Aldon"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh GETLATEST country=CORE module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		stage("CORE - Generate Diff Reports")
+		{
+			steps
+			{
+				echo "CORE - Generate Diff Reports"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh GENDIFF country=CORE module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+			}
+			post
+			{
+				success
+				{
+					archiveArtifacts(artifacts: "ald_devenv_root/CORE/ONLINE/CORE_*files.txt", allowEmptyArchive: true)
+				}
+			}
+		}
+
+		stage("CORE - Checkout Changed Objects")
+		{
+			when
+			{
+				expression { return ! params.Only_Generate_Reports }
+			}
+			steps
+			{
+				echo "CORE - Checkout Changed Objects From Aldon"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh CHECKOUT country=CORE module=ONLINE ald_task=${CORE_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		stage("CORE - Update Dev Environment")
+		{
+			when
+			{
+				expression { return ! params.Only_Generate_Reports }
+			}
+			steps
+			{
+				echo "CORE - Update Dev Environment"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh UPDATEDEVENV country=CORE module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		stage("CORE - Add New Objects to Aldon")
+		{
+			when
+			{
+				expression { return ! params.Only_Generate_Reports }
+			}
+			steps
+			{
+				echo "CORE - Add New Objects to Aldon"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh ADDNEWOBJECTS country=CORE module=ONLINE ald_task=${CORE_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		stage("CORE - Mark As Delete from Aldon")
+		{
+			when 
+			{
+				allOf
+				{
+					expression { params.CORE_Auto_Delete == 'NO' || params.CORE_Auto_Delete == 'YES' }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			environment 
+			{
+				def delobjectsurl = "${env.BUILD_URL}/artifact/ald_devenv_root/CORE/ONLINE/CORE_ONLINE_deleted_files.txt"
+				def delconfirmation = "YES"
+			}
+			steps
+			{
+				script
+				{
+					if (params.CORE_Auto_Delete == 'NO')
+					{
+						input ( id: 'delconfirmation', message: 'CORE - Proceed with mark as delete [YES/NO]?', parameters: [choice(choices: 'NO\nYES', description: "Deleted objects:\n${delobjectsurl}", name: 'CORE_MARK_AS_DELETE')])
+					}
+					
+					if (delconfirmation == 'YES')
+					{
+						echo "CORE - Marking Objects as Deleted in Aldon"
+						sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+						sh "${WORKSPACE}/pipeline/shell/pipeline.sh MARKASDELETE country=CORE module=ONLINE ald_task=${CORE_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+					}
+					else
+					{
+						echo "CORE - Skipping Mark As Delete as NO Selected"
+						sh "echo \$(date)'- INFO [CORE] [ald_mark_for_delete]: Skipping Mark As Delete as NO Selected...' >> ${WORKSPACE}/logs/pipeline.log"
+					}
+				}
+			}
+		}
+
+		stage("CORE - Check-in Objects to Aldon")
+		{                                  
+			when
+			{
+				expression { return ! params.Only_Generate_Reports }
+			}
+			steps
+			{
+				echo "CORE - Check-in Objects to Aldon"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh CHECKIN country=CORE module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+		
+		stage("CORE - Aldon Sign Off and Shutdown")
+		{                                   
+			steps
+			{
+				echo "CORE - Sign Off and Shutdown From Aldon"
+				sh "chmod 755 ${WORKSPACE}/pipeline/shell/pipeline.sh"
+				sh "${WORKSPACE}/pipeline/shell/pipeline.sh SHUTDOWN >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+		*/
+	}
+	
+	post
+	{
+		always 
+		{
+			archiveArtifacts(artifacts: "logs/pipeline.log", allowEmptyArchive: true)
+		}
+	}
+}
+

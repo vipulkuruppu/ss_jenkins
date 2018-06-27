@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+
+<project name="PLCE" basedir=".">
+  <description>Build script for deploying builds to SIT.
+  </description>
+
+  <tstamp>
+    <format property="TODAY" pattern="dd/MM/yyyy" locale="en"/>
+  </tstamp>
+  <echo message="Build started on ${TODAY} at ${TSTAMP} hrs" />
+
+  <!-- Build Configuration -->
+  <!-- ===================================================================== -->
+  <property name="deploy.shutdown.script"	value="${domain.dir}/stopManagedServer01.sh"/>
+  <property name="deploy.startup.script"	value="${domain.dir}/startManagedServer01.sh"/>
+  <property name="deploy.server.key.file"	value="/home/ownclssg/.ssh/id_rsa"/>
+  <property name="deploy.server.hostname"	value="CLSTSG84"/>
+  <property name="deploy.username"	value="ownclsmy"/>
+  
+  
+  
+  <!-- Deploy app to a external server -->
+  <target name="start-env">
+    <antcall target="remote-weblogic-start" />
+  </target>
+  
+  <target name="stop-env">
+    <antcall target="remote-weblogic-stop" />
+  </target>
+  
+  <target name="restart-env">
+    <antcall target="remote-weblogic-stop" />
+	<antcall target="remote-weblogic-start" />
+  </target>
+
+  <target name="remote-weblogic-stop">
+    <echo>command="${deploy.shutdown.script}"</echo>
+    <echo>Shutdown weblogic instance</echo>
+    <sshexec host="${deploy.server.hostname}" trust="true"
+			 keyfile="${deploy.server.key.file}"
+			 username="${deploy.username}" passphrase=""
+             timeout="240000"
+             failonerror="true"
+             command="${deploy.shutdown.script}"/>
+    <sleep seconds="90" />
+  </target>
+
+  <target name="remote-weblogic-start">
+    <echo>Start weblogic instance</echo>
+    <echo>command="${deploy.startup.script}"</echo>
+    <sshexec host="${deploy.server.hostname}" trust="true"
+			 keyfile="${deploy.server.key.file}"
+			 username="${deploy.username}" passphrase=""
+             timeout="120000"
+             failonerror="false"
+             command="${deploy.startup.script}"/>
+    <sleep seconds="90" />
+  </target>
+
+</project>

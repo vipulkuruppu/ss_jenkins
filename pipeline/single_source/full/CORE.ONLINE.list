@@ -1,0 +1,11 @@
+.settings
+plce-core-batch
+plce-core-common
+plce-core-dataaccess
+plce-core-ejb
+plce-core-libs
+plce-core-reports
+plce-core-service
+plce-core-web
+pom.xml
+.project

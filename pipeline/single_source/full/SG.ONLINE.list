@@ -1,0 +1,11 @@
+.settings
+plce-sg-batch
+plce-sg-common
+plce-sg-ear
+plce-sg-ejb
+plce-sg-libs
+plce-sg-reports
+plce-sg-service
+plce-sg-web
+pom.xml
+.project

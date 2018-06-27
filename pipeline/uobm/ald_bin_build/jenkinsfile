@@ -1,0 +1,592 @@
+/* ==============================================================
+ Jenkins pipeline for PLCE compile and check-in package to Aldon
+ [Non single source]
+
+ Created by: Vipul Kuruppu
+ Created on: 18-03-2018
+
+ Change list:
+ 14-04-2018: Updated for multiple modules
+============================================================== */
+
+pipeline
+{
+	agent { label 'CLSTSG80-AIX' }
+	parameters
+	{
+		string(defaultValue: 'branches/devmt/MY_MAS_Undrawn_2018', description: 'Enter SVN Path Relative to Country root (Note: https://ntrlptsg99.sg.uobnet.com:8443/svn/PLCE/Region/[COUNTRY]/ will be added automatically', name: 'COUNTRY_SVN_Branch')
+		choice(choices: 'SG\nTH\nMY\nID\nCN\nVN', description: 'Select country', name: 'Country')
+		choice(choices: 'BASE\nQR\nP1\nP2\nMR\nSS', description: 'Country specific Aldon Release (IMPORTANT: Please make sure release is available in LMe)', name: 'Country_Aldon_Release')
+		booleanParam(defaultValue: true, description: 'Select to check-in Country specific online in to Aldon', name: 'ONLINE')
+		string(defaultValue: 'online_task', description: 'Country Aldon Online Task Assembly', name: 'Country_Online_Aldon_Task')
+		choice(choices: 'SKIP\nNO\nYES', description: 'Proceed to mark as delete automatically in Online?', name: 'Online_Auto_Delete')
+		booleanParam(defaultValue: true, description: 'Select to check-in Country specific bin/cd scripts in to Aldon', name: 'SCRIPTS')
+		string(defaultValue: 'scripts_task', description: 'Country Aldon Scripts Task Assembly', name: 'Country_Scripts_Aldon_Task')
+		choice(choices: 'SKIP\nNO\nYES', description: 'Proceed to mark as delete automatically in scripts?', name: 'Scripts_Auto_Delete')
+		booleanParam(defaultValue: true, description: 'Select to check-in Country specific CD scripts in to Aldon', name: 'CDSCRIPTS')
+		string(defaultValue: 'cdscripts_task', description: 'Country Aldon CD scripts Task Assembly', name: 'Country_CDSCRIPTS_Aldon_Task')
+		choice(choices: 'SKIP\nNO\nYES', description: 'Proceed to mark as delete automatically in CD scripts?', name: 'CDScripts_Auto_Delete')
+
+		string(defaultValue: 'aldonusername', description: 'Enter Aldon Username', name: 'Username')
+		password(defaultValue: '12345', description: 'Enter Aldon Password', name: 'Password')
+		choice(choices: 'QUEUED\nFORCEQUEUED\nFORCE', description: 'Select run option. FORCE=Force run, QUEUED=Queue until timeout if another build is running, FORCEQUEUED=Wait for timeout and force run', name: 'Run_Mode')
+		choice(choices: '10\n20\n30\n40\n50\n60\n70\n80\n90', description: 'Select duration (in minutes) to queue. No effect if FORCE mode is selected', name: 'Queue_Timeout')
+		booleanParam(defaultValue: false, description: 'Select this option to stop at diff generation', name: 'Only_Generate_Reports')
+
+	}
+
+	stages
+	{
+
+		/* ============================================== Compile Build ================================================================ */
+
+		stage("Initialize Jenkins Environment")
+		{
+			steps
+			{
+				script
+				{
+					sh "if [ -d ${WORKSPACE}/logs ]; then rm -rf ${WORKSPACE}/logs/*; else mkdir -p ${WORKSPACE}/logs; fi"
+					sh "if [ -d ${WORKSPACE}/tmp ]; then rm -rf ${WORKSPACE}/tmp/*; else mkdir -p ${WORKSPACE}/tmp; fi"
+					sh "if [ -d ${WORKSPACE}/articacts ]; then rm -rf ${WORKSPACE}/articacts/*; else mkdir -p ${WORKSPACE}/articacts; fi"
+					sh "echo '-------------------------------------------------------------------------' > ${WORKSPACE}/logs/pipeline.log"
+					sh "echo 'Jenkins pipeline started at : '\$(date) >> ${WORKSPACE}/logs/pipeline.log"
+					sh "echo '-------------------------------------------------------------------------' >> ${WORKSPACE}/logs/pipeline.log"
+					sh "echo 'Selected modules:' >> ${WORKSPACE}/logs/pipeline.log"
+					if (params.ONLINE)
+						{
+							sh "echo 'ONLINE' >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					if (params.SCRIPTS)
+						{
+							sh "echo 'SCRIPTS' >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					if (params.CDSCRIPTS)
+						{
+							sh "echo 'CDSCRIPTS' >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					sh "echo '-------------------------------------------------------------------------' >> ${WORKSPACE}/logs/pipeline.log"
+					sh "echo >> ${WORKSPACE}/logs/pipeline.log"
+				}
+			}
+		}
+
+		/* ============================================== Checkout from SVN ================================================================ */
+
+		stage("Checkout Country Code From SVN")
+		{
+			when
+			{
+				expression { return ( params.ONLINE || params.SCRIPTS || params.CDSCRIPTS ) }
+			}
+			steps
+			{
+				echo "${Country} - Checking out https://ntrlptsg99.sg.uobnet.com:8443/svn/PLCE/Region/${Country}/${COUNTRY_SVN_Branch}"
+				sh "echo >> ${WORKSPACE}/logs/pipeline.log"
+				sh "echo 'Starting '${Country}' Specific Actions -------------------' >> ${WORKSPACE}/logs/pipeline.log"
+				sh "echo >> ${WORKSPACE}/logs/pipeline.log"
+				sh "echo ${Country}' - Checking out https://ntrlptsg99.sg.uobnet.com:8443/svn/PLCE/Region/'${Country}'/'${COUNTRY_SVN_Branch} >> ${WORKSPACE}/logs/pipeline.log"
+				checkout([
+					$class: 'SubversionSCM',
+					additionalCredentials: [],
+					excludedCommitMessages: '',
+					excludedRegions: '',
+					excludedRevprop: '',
+					excludedUsers: '',
+					filterChangelog: false,
+					ignoreDirPropChanges: false,
+					includedRegions: '',
+					locations: [[credentialsId: 'JENKINS_SVN',
+								depthOption: 'infinity',
+								ignoreExternalsOption: true,
+								local: "./svn_src/${Country}",
+								remote: "https://ntrlptsg99.sg.uobnet.com:8443/svn/PLCE/Region/${Country}/${COUNTRY_SVN_Branch}" ]],
+					workspaceUpdater: [$class: 'CheckoutUpdater']
+				])
+
+			}
+		}
+
+		/* ============================================== Checkout from SVN ================================================================ */
+
+		stage("Country - Tag codes for the build")
+		{
+			when
+			{
+				expression { return ( params.ONLINE || params.SCRIPTS || params.CDSCRIPTS ) }
+			}
+			steps
+			{
+				script
+				{
+
+					if (params.ONLINE)
+						{
+							echo "${Country} - ONLINE - Tag codes for the build"
+							sh "chmod 755 ${WORKSPACE}/*.sh"
+							sh "${WORKSPACE}/prepare_sorce_zip.sh country=${Country} module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					if (params.SCRIPTS)
+						{
+							echo "${Country} - SCRIPTS - Tag codes for the build"
+							sh "chmod 755 ${WORKSPACE}/*.sh"
+							sh "${WORKSPACE}/prepare_sorce_zip.sh country=${Country} module=SCRIPTS >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					if (params.CDSCRIPTS)
+						{
+							echo "${Country} - CDSCRIPTS - Tag codes for the build"
+							sh "chmod 755 ${WORKSPACE}/*.sh"
+							sh "${WORKSPACE}/prepare_sorce_zip.sh country=${Country} module=CDSCRIPTS >> ${WORKSPACE}/logs/pipeline.log"
+						}
+				}
+			}
+			post
+			{
+				success
+				{
+					archiveArtifacts(artifacts: "articacts/*", allowEmptyArchive: true)
+				}
+			}
+		}
+
+		stage("Country - ONLINE - Compile and Build")
+		{
+			when
+			{
+				expression { return params.ONLINE }
+			}
+			steps
+			{
+				echo "${Country} - ONLINE - Compile and Build"
+				sh "chmod 755 ${WORKSPACE}/*.sh"
+				sh "${WORKSPACE}/online_compile.sh country=${Country} module=ONLINE >> ${WORKSPACE}/logs/pipeline.log"
+
+			}
+		}
+
+		stage("Country - SCRIPTS - Compile and Build")
+		{
+			when
+			{
+				expression { return params.SCRIPTS }
+			}
+			steps
+			{
+				echo "${Country} - SCRIPTS - Compile and Build"
+				sh "chmod 755 ${WORKSPACE}/*.sh"
+				sh "${WORKSPACE}/scripts_compile.sh country=${Country} module=SCRIPTS >> ${WORKSPACE}/logs/pipeline.log"
+
+			}
+		}
+
+		stage("Country - CDSCRIPTS - Compile and Build")
+		{
+			when
+			{
+				expression { return params.CDSCRIPTS }
+			}
+			steps
+			{
+				echo "${Country} - CDSCRIPTS - Compile and Build"
+				sh "chmod 755 ${WORKSPACE}/*.sh"
+				sh "${WORKSPACE}/cdscripts_compile.sh country=${Country} module=CDSCRIPTS >> ${WORKSPACE}/logs/pipeline.log"
+
+			}
+		}
+
+		/* ============================================== ONLINE -> Aldon ================================================================ */
+
+		stage("Country - ONLINE - Aldon - Signon GetLatest and GenDiff")
+		{
+			when
+			{
+				expression { return params.ONLINE }
+			}
+			steps
+			{
+				script
+				{
+					def ALD_RELEASE = ""
+					def MODULE = "ONLINE"
+					def ALD_ANCHOR = "UX_APP"
+					if (params.Country_Aldon_Release == 'BASE')
+					{
+						ALD_RELEASE = "UOB/CLR/CLR(${Country})"
+					}
+					else
+					{
+						ALD_RELEASE = "UOB/CLR/CLR(${Country}_${Country_Aldon_Release})"
+					}
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Initialiting ${ALD_RELEASE}::\\\$${ALD_ANCHOR}"
+					sh "${WORKSPACE}/aldon.sh INIT ald_release=\"${ALD_RELEASE}::\\\\\\\$${ALD_ANCHOR}\" country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Signing On to Aldon"
+					wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[password: "${Password}", var: 'Password']]])
+					{
+						sh "${WORKSPACE}/aldon.sh SIGNON ald_user=${Username} ald_scrt=${Password} country=${Country} module=${MODULE} run_mode=${Run_Mode} queue_timeout=${Queue_Timeout} >> ${WORKSPACE}/logs/pipeline.log"
+					}
+					echo "${Country} - ${MODULE} - Set Development Env"
+					sh "${WORKSPACE}/aldon.sh SETDEVENV country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Get Latest From Aldon"
+					sh "${WORKSPACE}/aldon.sh GETLATEST country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Generate Diff Reports"
+					sh "${WORKSPACE}/aldon.sh GENDIFF country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+				}
+			}
+			post
+			{
+				success
+				{
+					archiveArtifacts(artifacts: "ald_devenv_root/${Country}/${MODULE}/${Country}_*files.txt", allowEmptyArchive: true)
+				}
+			}
+		}
+
+		stage("Country - ONLINE - Aldon - Checkout and Update")
+		{
+			when
+			{
+				allOf
+				{
+					expression { return params.ONLINE }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			steps
+			{
+				script
+				{
+					def MODULE = "ONLINE"
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Checkout Changed Objects From Aldon"
+					sh "${WORKSPACE}/aldon.sh CHECKOUT country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Update Dev Environment"
+					sh "${WORKSPACE}/aldon.sh UPDATEDEVENV country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Add New Objects to Aldon"
+					sh "${WORKSPACE}/aldon.sh ADDNEWOBJECTS country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+
+					if (params.Online_Auto_Delete == 'SKIP')
+					{
+						echo "${Country} - ${MODULE} - Skipping Mark As Delete"
+					}
+					else
+					{
+						if (params.Online_Auto_Delete == 'NO')
+						{
+							input ( id: 'delconfirmation', message: "${Country}:${MODULE} - Proceed with mark as delete [YES/NO]?", parameters: [choice(choices: 'NO\nYES', description: "Deleted objects:\n${delobjectsurl}", name: 'ONLINE_MARK_AS_DELETE')])
+						}
+
+						if (delconfirmation == 'YES')
+						{
+							echo "${Country} - ${MODULE} - Marking Objects as Deleted in Aldon"
+							sh "${WORKSPACE}/aldon.sh MARKASDELETE country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+						}
+						else
+						{
+							echo "${Country} - ${MODULE} - Skipping Mark As Delete as NO Selected"
+							sh "echo \$(date)'- INFO ['${Country}'] [${MODULE}] [ald_mark_for_delete]: Skipping Mark As Delete as NO Selected...' >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					}
+				}
+			}
+		}
+
+		stage("Country - ONLINE - Check-in Objects to Aldon")
+		{
+			when
+			{
+				allOf
+				{
+					expression { return params.ONLINE }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			environment
+			{
+				def MODULE = "ONLINE"
+			}
+			steps
+			{
+				sh "chmod 755 ${WORKSPACE}/aldon.sh"
+				echo "${Country} - ${MODULE} - Check-in Objects to Aldon"
+				sh "${WORKSPACE}/aldon.sh CHECKIN country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		/* ============================================== SCRIPTS -> Aldon ================================================================ */
+
+		stage("Country - SCRIPTS - Aldon - Signon GetLatest and GenDiff")
+		{
+			when
+			{
+				expression { return params.SCRIPTS }
+			}
+			steps
+			{
+				script
+				{
+					def ALD_RELEASE = ""
+					def MODULE = "SCRIPTS"
+					def ALD_ANCHOR = "UX_BATCH"
+
+					if (params.Country_Aldon_Release == 'BASE')
+					{
+						ALD_RELEASE = "UOB/CLR/CLR(${Country})"
+					}
+					else
+					{
+						ALD_RELEASE = "UOB/CLR/CLR(${Country}_${Country_Aldon_Release})"
+					}
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Initialiting ${ALD_RELEASE}::\\\$${ALD_ANCHOR}"
+					sh "${WORKSPACE}/aldon.sh INIT ald_release=\"${ALD_RELEASE}::\\\\\\\$${ALD_ANCHOR}\" country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Signing On to Aldon"
+					wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[password: "${Password}", var: 'Password']]])
+					{
+						sh "${WORKSPACE}/aldon.sh SIGNON ald_user=${Username} ald_scrt=${Password} country=${Country} module=${MODULE} run_mode=${Run_Mode} queue_timeout=${Queue_Timeout} >> ${WORKSPACE}/logs/pipeline.log"
+					}
+					echo "${Country} - ${MODULE} - Set Development Env"
+					sh "${WORKSPACE}/aldon.sh SETDEVENV country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Get Latest From Aldon"
+					sh "${WORKSPACE}/aldon.sh GETLATEST country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Generate Diff Reports"
+					sh "${WORKSPACE}/aldon.sh GENDIFF country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+				}
+			}
+			post
+			{
+				success
+				{
+					archiveArtifacts(artifacts: "ald_devenv_root/${Country}/${MODULE}/${Country}_*files.txt", allowEmptyArchive: true)
+				}
+			}
+		}
+
+		stage("Country - SCRIPTS - Aldon - Checkout and Update")
+		{
+			when
+			{
+				allOf
+				{
+					expression { return params.SCRIPTS }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			steps
+			{
+				script
+				{
+					def MODULE = "SCRIPTS"
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Checkout Changed Objects From Aldon"
+					sh "${WORKSPACE}/aldon.sh CHECKOUT country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Update Dev Environment"
+					sh "${WORKSPACE}/aldon.sh UPDATEDEVENV country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Add New Objects to Aldon"
+					sh "${WORKSPACE}/aldon.sh ADDNEWOBJECTS country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+
+					if (params.Scripts_Auto_Delete == 'SKIP')
+					{
+						echo "${Country} - ${MODULE} - Skipping Mark As Delete"
+					}
+					else
+					{
+						if (params.Scripts_Auto_Delete == 'NO')
+						{
+							input ( id: 'delconfirmation', message: "${Country}:${MODULE} - Proceed with mark as delete [YES/NO]?", parameters: [choice(choices: 'NO\nYES', description: "Deleted objects:\n${delobjectsurl}", name: 'SCRIPTS_MARK_AS_DELETE')])
+						}
+
+						if (delconfirmation == 'YES')
+						{
+							echo "${Country} - ${MODULE} - Marking Objects as Deleted in Aldon"
+							sh "${WORKSPACE}/aldon.sh MARKASDELETE country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+						}
+						else
+						{
+							echo "${Country} - ${MODULE} - Skipping Mark As Delete as NO Selected"
+							sh "echo \$(date)'- INFO ['${Country}'] [${MODULE}] [ald_mark_for_delete]: Skipping Mark As Delete as NO Selected...' >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					}
+				}
+			}
+		}
+
+		stage("Country - SCRIPTS - Check-in Objects to Aldon")
+		{
+			when
+			{
+				allOf
+				{
+					expression { return params.SCRIPTS }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			environment
+			{
+				def MODULE = "SCRIPTS"
+			}
+			steps
+			{
+				sh "chmod 755 ${WORKSPACE}/aldon.sh"
+				echo "${Country} - ${MODULE} - Check-in Objects to Aldon"
+				sh "${WORKSPACE}/aldon.sh CHECKIN country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		/* ============================================== CDSCRIPTS -> Aldon ================================================================ */
+
+		stage("Country - CDSCRIPTS - Aldon - Signon GetLatest and GenDiff")
+		{
+			when
+			{
+				expression { return params.CDSCRIPTS }
+			}
+			steps
+			{
+				script
+				{
+					def ALD_RELEASE = ""
+					def MODULE = "CDSCRIPTS"
+					def ALD_ANCHOR = "UX_CD"
+
+					if (params.Country_Aldon_Release == 'BASE')
+					{
+						ALD_RELEASE = "UOB/CLR/CLR(${Country})"
+					}
+					else
+					{
+						ALD_RELEASE = "UOB/CLR/CLR(${Country}_${Country_Aldon_Release})"
+					}
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Initialiting ${ALD_RELEASE}::\\\$${ALD_ANCHOR}"
+					sh "${WORKSPACE}/aldon.sh INIT ald_release=\"${ALD_RELEASE}::\\\\\\\$${ALD_ANCHOR}\" country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Signing On to Aldon"
+					wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[password: "${Password}", var: 'Password']]])
+					{
+						sh "${WORKSPACE}/aldon.sh SIGNON ald_user=${Username} ald_scrt=${Password} country=${Country} module=${MODULE} run_mode=${Run_Mode} queue_timeout=${Queue_Timeout} >> ${WORKSPACE}/logs/pipeline.log"
+					}
+					echo "${Country} - ${MODULE} - Set Development Env"
+					sh "${WORKSPACE}/aldon.sh SETDEVENV country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Get Latest From Aldon"
+					sh "${WORKSPACE}/aldon.sh GETLATEST country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Generate Diff Reports"
+					sh "${WORKSPACE}/aldon.sh GENDIFF country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+				}
+			}
+			post
+			{
+				success
+				{
+					archiveArtifacts(artifacts: "ald_devenv_root/${Country}/${MODULE}/${Country}_*files.txt", allowEmptyArchive: true)
+				}
+			}
+		}
+
+		stage("Country - CDSCRIPTS - Aldon - Checkout and Update")
+		{
+			when
+			{
+				allOf
+				{
+					expression { return params.CDSCRIPTS }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			steps
+			{
+				script
+				{
+					def MODULE = "CDSCRIPTS"
+					sh "chmod 755 ${WORKSPACE}/aldon.sh"
+					echo "${Country} - ${MODULE} - Checkout Changed Objects From Aldon"
+					sh "${WORKSPACE}/aldon.sh CHECKOUT country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Update Dev Environment"
+					sh "${WORKSPACE}/aldon.sh UPDATEDEVENV country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+					echo "${Country} - ${MODULE} - Add New Objects to Aldon"
+					sh "${WORKSPACE}/aldon.sh ADDNEWOBJECTS country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+
+					if (params.CDScripts_Auto_Delete == 'SKIP')
+					{
+						echo "${Country} - ${MODULE} - Skipping Mark As Delete"
+					}
+					else
+					{
+						if (params.CDScripts_Auto_Delete == 'NO')
+						{
+							input ( id: 'delconfirmation', message: "${Country}:${MODULE} - Proceed with mark as delete [YES/NO]?", parameters: [choice(choices: 'NO\nYES', description: "Deleted objects:\n${delobjectsurl}", name: 'CDSCRIPTS_MARK_AS_DELETE')])
+						}
+
+						if (delconfirmation == 'YES')
+						{
+							echo "${Country} - ${MODULE} - Marking Objects as Deleted in Aldon"
+							sh "${WORKSPACE}/aldon.sh MARKASDELETE country=${Country} module=${MODULE} ald_task=${Country_Online_Aldon_Task} >> ${WORKSPACE}/logs/pipeline.log"
+						}
+						else
+						{
+							echo "${Country} - ${MODULE} - Skipping Mark As Delete as NO Selected"
+							sh "echo \$(date)'- INFO ['${Country}'] [${MODULE}] [ald_mark_for_delete]: Skipping Mark As Delete as NO Selected...' >> ${WORKSPACE}/logs/pipeline.log"
+						}
+					}
+				}
+			}
+		}
+
+		stage("Country - CDSCRIPTS - Check-in Objects to Aldon")
+		{
+			when
+			{
+				allOf
+				{
+					expression { return params.CDSCRIPTS }
+					expression { return ! params.Only_Generate_Reports }
+				}
+			}
+			environment
+			{
+				def MODULE = "CDSCRIPTS"
+			}
+			steps
+			{
+				sh "chmod 755 ${WORKSPACE}/aldon.sh"
+				echo "${Country} - ${MODULE} - Check-in Objects to Aldon"
+				sh "${WORKSPACE}/aldon.sh CHECKIN country=${Country} module=${MODULE} >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+
+		/* ============================================== Signoff from Aldon ================================================================ */
+
+		stage("Country - Aldon Sign Off and Shutdown")
+		{
+			when
+			{
+				expression { return ( params.ONLINE || params.SCRIPTS || params.CDSCRIPTS ) }
+			}
+			steps
+			{
+				sh "chmod 755 ${WORKSPACE}/aldon.sh"
+				echo "${Country} - Sign Off and Shutdown From Aldon"
+				sh "${WORKSPACE}/aldon.sh SHUTDOWN >> ${WORKSPACE}/logs/pipeline.log"
+			}
+		}
+	}
+
+	post
+	{
+		failure
+		{
+			archiveArtifacts(artifacts: "logs/pipeline.log", allowEmptyArchive: true)
+			sh "chmod 755 ${WORKSPACE}/*.sh"
+			sh "${WORKSPACE}/mailx.sh ${WORKSPACE}/tmp/${Country}.release 1 1 ${WORKSPACE}/logs/pipeline.log ${Country}"
+		}
+		success
+		{
+			archiveArtifacts(artifacts: "logs/pipeline.log", allowEmptyArchive: true)
+			sh "chmod 755 ${WORKSPACE}/*.sh"
+			sh "${WORKSPACE}/mailx.sh ${WORKSPACE}/tmp/${Country}.release 0 1 ${WORKSPACE}/logs/pipeline.log ${Country}"
+		}
+	}
+}
+
